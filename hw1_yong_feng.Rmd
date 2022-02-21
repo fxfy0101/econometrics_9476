@@ -1,0 +1,281 @@
+---
+title: "ECON 9476 Homework 1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Exercise E2.1.
+
+This simulation assumes the following model:
+
+$$Y_i = 0.4 + 0.8X_i + U_i$$
+$$X_i = 0.5 + \gamma_1Z_i + V_i$$
+$$\begin{bmatrix}U\\V\end{bmatrix} \sim N\left(\begin{bmatrix}0\\0\end{bmatrix}, \begin{bmatrix}1.0, 0.5\\0.5, 1.0\end{bmatrix}\right)$$
+
+Each simulation runs 1,000 replications. In each simulation, $\gamma_1$ has different values so we can see how small it must be to start affecting the properties of the IV estimator and CIs.
+
+Two packages are imported. `tidyverse` is used to make plots and `MASS` is used to generate bivariate normal random numbers.I defined functions to estimate first stage and second stage coefficient (constant excluded), fitted values, residuals, and the 2SLS variance and covariance matrix. Formulas are:
+
+$$\hat{\beta}_{OLS} = (X'X)^{-1}X'y$$
+$$\hat{y}_{OLS} = X(X'X)^{-1}X'y$$
+
+$$\hat{\beta}_{2SLS} = (Z'X)^{-1}Z'y$$
+
+$$\hat{y}_{2SLS} = X(Z'X)^{-1}Z'y$$
+
+$$\hat{V}_{\hat{\beta}_{2SLS}} = (\hat{X}'X)^{-1}\left(\sum_{i = 1}^n\hat{U}_i^2\hat{X}_i\hat{X}_i'\right)(\hat{X}'X)^{-1}$$
+where $\hat{U}_i$ is the residuals from the 2SLS estimation.
+
+```{r message=FALSE}
+library(tidyverse)
+library(MASS)
+
+ols_coef <- function(y, x){
+  X <- cbind(1, x)
+  estimator <- solve(t(X) %*% X) %*% t(X) %*% y
+  return(estimator[2])
+}
+
+ols_fitted.values <- function(y, x){
+  X <- cbind(1, x)
+  return((X %*% (solve(t(X) %*% X) %*% t(X) %*% y))[, 1])
+}
+
+ols_residuals <- function(y, x){
+  return(y - ols_fitted.values(y, x))
+}
+
+iv_coef <- function(y, x, instrument){
+  X <- cbind(1, x)
+  Z <- cbind(1, instrument)
+  estimator <- solve(t(Z) %*% X) %*% t(Z) %*% y
+  return(estimator[2])
+}
+
+iv_fitted.values <- function(y, x, instrument){
+  X <- cbind(1, x)
+  Z <- cbind(1, instrument)
+  return((X %*% solve(t(Z) %*% X) %*% t(Z) %*% y)[, 1])
+}
+
+iv_residuals <- function(y, x, instrument) {
+  return(y - iv_fitted.values(y, x, instrument))
+}
+
+iv_vcov <- function(y, x, instrument){
+  e_hat <- iv_residuals(y, x, instrument)
+  x_hat <- ols_fitted.values(x, instrument)
+  X_hat <- cbind(1, x_hat)
+  omega <- c(0, 0, 0, 0)
+  for (i in 1:length(e_hat)) {
+    omega <- omega + (e_hat[i]^2) * c(1, x_hat[i], x_hat[i], x_hat[i]^2)
+  }
+  omega <- matrix(omega, nrow = 2)
+  return(solve(t(X_hat) %*% X_hat) %*%  omega %*% solve(t(X_hat) %*% X_hat))
+}
+
+### define a function to repeat the simulation process
+iv_simulation <- function(gamma_1){
+  mu <- c(0, 0)
+  sigma <- matrix(c(1, 0.5, 0.5, 1), nrow = 2)
+  beta_0 <- 0.4
+  beta_1 <- 0.8
+  gamma_0 <- 0.5
+  simulation_result <- data.frame(beta_1_hat = rep(0, 1000),
+                                  beta_1_inside = rep(0, 1000))
+  set.seed(10101)
+  for (i in 1:1000) {
+    z <- sample(1:100, size = 100, replace = TRUE)
+    errors <- mvrnorm(n = 100, mu, sigma)
+    u <- errors[, 1]
+    v <- errors[, 2]
+    x <- gamma_0 + gamma_1 * z + v
+    y <- beta_0 + beta_1 * x + u
+    simulation_result[i, 1] <- iv_coef(y, x, z)
+    CI_upper <- iv_coef(y, x, z) + 1.96 * sqrt(diag(iv_vcov(y, x, z))[2])
+    CI_lower <- iv_coef(y, x, z) - 1.96 * sqrt(diag(iv_vcov(y, x, z))[2])
+    if (beta_1 <= CI_upper & beta_1 >= CI_lower) {
+      simulation_result[i, 2] <- 1
+    }
+  }
+  return(simulation_result)
+}
+```
+
+### Sampling Distribution of $\hat{\beta}_1$
+
+In this section, we test the sampling distribution of the IV estimator with different values of $\gamma_1$. If an instrument is weak, the 2SLS estimator has very large standard errors. Therefore, we should see that the distribution of $\hat{\beta}_1$ will become wider and variance larger as we decrease the value of $\gamma_1$.
+
+#### $\gamma_1 = 10$:
+
+```{r message=FALSE}
+### Run simulation
+simulation_1 <- iv_simulation(10)
+```
+
+```{r message=FALSE}
+### plot the histogram
+ggplot(data = simulation_1, mapping = aes(x = beta_1_hat)) +
+  geom_histogram(fill = "lightblue") +
+  geom_vline(xintercept = 0.8) +
+  labs(x = expression(hat(beta)[1]), 
+       title = expression(paste("Sampling distribution of ", hat(beta)[1], " with ", gamma[1], " = 10"))) +
+  theme_bw()
+
+### the simulated coverage probability
+sum(simulation_1$beta_1_inside) / 1000
+
+### sampling variance
+var(simulation_1$beta_1_hat)
+```
+
+#### $\gamma_1 = 5$:
+
+```{r message=FALSE}
+### Run simulation
+simulation_2 <- iv_simulation(5)
+```
+
+```{r message=FALSE}
+### plot the histogram
+ggplot(data = simulation_2, mapping = aes(x = beta_1_hat)) +
+  geom_histogram(fill = "lightblue") +
+  geom_vline(xintercept = 0.8) +
+  labs(x = expression(hat(beta)[1]), 
+       title = expression(paste("Sampling distribution of ", hat(beta)[1], " with ", gamma[1], " = 5"))) +
+  theme_bw()
+
+### the simulated coverage probability
+sum(simulation_2$beta_1_inside) / 1000
+
+### sampling variance
+var(simulation_2$beta_1_hat)
+```
+
+#### $\gamma_1 = 1$:
+
+```{r message=FALSE}
+### Run simulation
+simulation_3 <- iv_simulation(1)
+```
+
+```{r message=FALSE}
+### plot the histogram
+ggplot(data = simulation_3, mapping = aes(x = beta_1_hat)) +
+  geom_histogram(fill = "lightblue") +
+  geom_vline(xintercept = 0.8) +
+  labs(x = expression(hat(beta)[1]), 
+       title = expression(paste("Sampling distribution of ", hat(beta)[1], " with ", gamma[1], " = 3"))) +
+  theme_bw()
+
+### the simulated coverage probability
+sum(simulation_3$beta_1_inside) / 1000
+
+### sampling variance
+var(simulation_3$beta_1_hat)
+```
+ 
+#### $\gamma_1 = 0.5$:
+
+```{r message=FALSE}
+### Run simulation
+simulation_4 <- iv_simulation(0.5)
+```
+
+```{r message=FALSE}
+### plot the histogram
+ggplot(data = simulation_4, mapping = aes(x = beta_1_hat)) +
+  geom_histogram(fill = "lightblue") +
+  geom_vline(xintercept = 0.8) +
+  labs(x = expression(hat(beta)[1]), 
+       title = expression(paste("Sampling distribution of ", hat(beta)[1], " with ", gamma[1], " = 0.5"))) +
+  theme_bw()
+
+### the simulated coverage probability
+sum(simulation_4$beta_1_inside) / 1000
+
+### sampling variance
+var(simulation_4$beta_1_hat)
+```
+
+#### $\gamma_1 = 0.1$:
+
+```{r message=FALSE}
+### Run simulation
+simulation_5 <- iv_simulation(0.1)
+```
+
+```{r message=FALSE}
+### plot the histogram
+ggplot(data = simulation_5, mapping = aes(x = beta_1_hat)) +
+  geom_histogram(fill = "lightblue") +
+  geom_vline(xintercept = 0.8) +
+  labs(x = expression(hat(beta)[1]), 
+       title = expression(paste("Sampling distribution of ", hat(beta)[1], " with ", gamma[1], " = 0.1"))) +
+  theme_bw()
+
+### the simulated coverage probability
+sum(simulation_5$beta_1_inside) / 1000
+
+### sampling variance
+var(simulation_5$beta_1_hat)
+```
+
+#### $\gamma_1 = 0.01$:
+
+```{r message=FALSE}
+### Run simulation
+simulation_6 <- iv_simulation(0.01)
+```
+
+```{r message=FALSE}
+### plot the histogram
+ggplot(data = simulation_6, mapping = aes(x = beta_1_hat)) +
+  geom_histogram(fill = "lightblue") +
+  geom_vline(xintercept = 0.8) +
+  labs(x = expression(hat(beta)[1]), 
+       title = expression(paste("Sampling distribution of ", hat(beta)[1], " with ", gamma[1], " = 0.01"))) +
+  theme_bw()
+
+### the simulated coverage probability
+sum(simulation_6$beta_1_inside) / 1000
+
+### sampling variance
+var(simulation_6$beta_1_hat)
+```
+
+#### $\gamma_1 = 0.001$:
+
+```{r message=FALSE}
+### Run simulation
+simulation_7 <- iv_simulation(0.001)
+```
+
+```{r message=FALSE}
+### plot the histogram
+ggplot(data = simulation_7, mapping = aes(x = beta_1_hat)) +
+  geom_histogram(fill = "lightblue") +
+  geom_vline(xintercept = 0.8) +
+  labs(x = expression(hat(beta)[1]), 
+       title = expression(paste("Sampling distribution of ", hat(beta)[1], " with ", gamma[1], " = 0.001"))) +
+  theme_bw()
+
+### the simulated coverage probability
+sum(simulation_7$beta_1_inside) / 1000
+
+### sampling variance
+var(simulation_7$beta_1_hat)
+```
+
+### Result
+
+The simulation results confirmed that the standard error of the IV estimator becomes larger and larger as the instrument becomes weaker. When $\gamma_1$ becomes 0.1, it seems that the sampling distribution is still not bad and the sampling variance is `r var(simulation_5$beta_1_hat)`. But when $\gamma_1$ is set to 0.01, the distribution changes a lot. A single realization of $\beta_1$ could be far from its true value. 
+
+For all the seven simulations, the coverage probability all is near or exceeds 95%. But it seems that the coverage probability slightly increased as the value of $\gamma_1$ becomes smaller. This probably because the confidence interval becomes larger as the value of $\gamma_1$ decrease following the formula of confidence interval:
+
+$$\text{CI} = \hat{\beta}_1 \pm 1.96\text{SE}(\hat{\beta}_1)$$
+
+the standard error becomes larger so the interval becomes larger, so the probability of the confidence interval contains the true value of $\beta_1$ increases.
