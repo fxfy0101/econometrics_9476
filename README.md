@@ -5,7 +5,7 @@
 Design, code, and run a simulation exploring the sensitivity of IV estimates and standard confidence intervals to the strength of the instrument. Use sample size
 $n = 100$ observations per dataset. Let
 
-$$Y_i = 0.4 + 0.8 X_i + U_i$$
+$Y_i = 0.4 + 0.8 X_i + U_i$
 
 $$X_i = 0.5 + \gamma_1Z_i + V_i$$
 
