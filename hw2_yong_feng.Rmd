@@ -1,0 +1,93 @@
+---
+title: "ECON 9476 Homework 2"
+output: html_document
+---
+
+# Exercise E7.1.
+
+For this exercise, I replicate the IV estimate from [Card (1993)](https://www.nber.org/papers/w4483) which tries to identify a causal link between schooling and earnings. The main regression equation is:
+
+$$Y_i = \alpha + \delta S_i + \gamma X_i + \varepsilon_i$$
+where $Y_i$ is log earnings, $S$ is years of schooling, $X$ is a matrix of exogenous variables, and $\varepsilon$ is an error term. Data used in this paper comes from the NLS Young Men Cohort of the National Longitudinal Survey. It can be downloaded from the R package `ivmodel`.
+
+The estimated causal effect is believed to be biased because the error term $\varepsilon$ contains unobserved individual ability which is correlated with schooling. [Card (1993)](https://www.nber.org/papers/w4483) explores the use of college proximity as an exogenous determinant of schooling. The instrument variable is a dummy `nearc4` which equals 1 if there's a college in the county where the individual lives in. It's argued that the college proximity can lower the costs of attending college and thus increase schooling.
+
+The following part is a replication of the main results.
+
+## IV Estimate Replication
+
+```{r message=FALSE}
+### import packages
+library(ivreg)
+library(ivmodel)
+library(quantreg)
+library(stargazer)
+
+### import dataset
+data(card.data)
+
+### ols regression
+ols_reg <- lm(lwage ~ educ + exper + black + south + married + smsa, data = card.data)
+
+### 2sls
+iv_reg <- ivreg(lwage ~ educ + exper + black + south + married + smsa | exper + black + south + married + smsa + nearc4, data = card.data)
+
+### output
+stargazer(ols_reg, iv_reg, type = "text")
+```
+
+I report both the OLS and the 2SLS results. Typically, we think that the regressor, years of schooling, is positively correlated with individual ability. The dependent variable, log earnings, is also positively correlated with individual ability. Therefore, the OLS coefficient estimate should be overestimated and then 2SLS estimate should be smaller. But the 2SLS indicates a much larger return to schooling instead.
+
+One of the possible explanations is the dependent variable measurement error and coefficient estimate is biased towards zero. 2SLS mitigates the bias and recover its true value. Another possible explanation is the selection of compilers. Using college proximity as instrument, we are selecting on compilers whose behavior is affected by the instrument. These compilers go to college only because there's college in their community. Attending college for them is cheaper because they can live at home. These compilers have larger returns to schooling.
+
+## IV Quantile Regression
+
+Next,  I use the `ivqr.see()` function from `ivqr_see.R` to run IV quantile regression for quantile levels $\tau = 0.05, 0.10, 0.15, 0.25, 0.35, 0.40, 0.50, 0.60, 0.65, 0.75, 0.80, 0.95$. I didn't fully understand the function. It seems that it will raise an error if the dataset contains `NA` values, so I removed observations with `NA` values before the estimation. I'm not sure if this is correct.
+
+```{r message=FALSE} 
+### import source files
+source('https://raw.githubusercontent.com/kaplandm/R/main/ivqr_see.R')
+source('https://raw.githubusercontent.com/kaplandm/R/main/gmmq.R')
+
+### filter the dataset
+card.data.na.rm <- dplyr::filter(card.data, !is.na(lwage), !is.na(educ), !is.na(exper), 
+                                 !is.na(black), !is.na(south), !is.na(married), 
+                                 !is.na(smsa), !is.na(nearc4))
+
+attach(card.data.na.rm)
+dep.var <- lwage
+endog.var <- educ
+exo.var <- cbind(exper, black, south, married, smsa)
+instrument <- nearc4
+
+tau <- c(0.05, 0.10, 0.15, 0.25, 0.35, 0.40, 0.50, 0.60, 0.65, 0.75, 0.80, 0.95)
+
+### Use plug in bandwidth
+for (i in tau) {
+  result <- ivqr.see(i, dep.var, endog.var, X.exog = exo.var, Z.excl = instrument)
+  print(sprintf("The %.2f-th quantile coefficient estimate is %f", i, result$b[1]))
+}
+
+### Use zero bandwidth
+for (i in tau) {
+  result <- ivqr.see(i, dep.var, endog.var, X.exog = exo.var, Z.excl = instrument, h = 0)
+  print(sprintf("The %.2f-th quantile coefficient estimate is %f", i, result$b[1]))
+}
+
+detach(card.data.na.rm)
+```
+
+## Discussion
+
+For the results using plug-in bandwidth, we can find that the return to schooling decreases as percentile increases from 0.25 to 0.80. Roughly speaking, the return to schooling is higher for individuals with lower ability. The coefficient estimate is largest in our loops for 0.25-th quantile. One additional year of schooling will lead to about 14.4% increase in wage, holding other variables constant. Compared with the lowest estimate at 0.05-th quantile, the difference is about 10%. This is economically significant for wage increase.
+
+For the results using zero bandwidth, there's no a clear trend but still the return to schooling is higher for individuals with relatively lower ability. The coefficient estimate for 0.40-th quantile is the second largest in our loops. But the return to schooling is much higher for 0.95-th quantile. The smallest estimate is negative, so the difference is still economically significant.
+
+The coefficient estimates on median with plug-in bandwidth and zero bandwidth are both larger than estimate on mean. But the difference is very small, less than 1%, which is not economically significant. This seems reasonable. Because human beings' abilities should be normally distributed. If our sample is random, individuals with median and mean ability should not differ much.
+
+Before estimation, I thought the return to schooling should be higher for those individuals with higher ability. But the estimation indicates an opposite direction. Possible explanation is that individuals with higher ability can receive higher wage even they didn't receive education, so the effect of education on their income is quite small. But for those with lower ability, the return to education is higher. Education, to some extent, signals their abilities to employers because intuition tells us that individuals with higher ability seek more education.
+
+
+# Reference
+
+- Card, David. “Using Geographic Variation in College Proximity to Estimate the Return to Schooling.” Labor: Human Capital (1993): n. pag.
